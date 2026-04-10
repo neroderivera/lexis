@@ -72,7 +72,7 @@ async def analyze(request: Request):
         try:
             stream = await client.chat.completions.create(
                 model="gpt-5.4",
-                max_completion_tokens=1500,
+                max_completion_tokens=100000,
                 temperature=0.7,
                 stream=True,
                 messages=[
