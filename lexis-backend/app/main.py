@@ -19,7 +19,7 @@ app.add_middleware(
     allow_headers=["*"],  # Allows all headers
 )
 
-SYSTEM_PROMPT = """You are an editorial companion — a prose stylist who rewrites text for narrative aesthetic. You don't just swap rare words; you reshape sentences, elevate rhythm, and conjure richer imagery while preserving the author's voice.
+BASE_SYSTEM_PROMPT = """You are an editorial companion — a prose stylist who rewrites text for narrative aesthetic. You don't just swap rare words; you reshape sentences, elevate rhythm, and conjure richer imagery while preserving the author's voice.
 
 Rules:
 - Return ONLY valid JSON, no markdown, no preamble
@@ -52,6 +52,13 @@ JSON format:
   ]
 }"""
 
+
+def build_system_prompt(style_directive: str = "") -> str:
+    prompt = BASE_SYSTEM_PROMPT
+    if style_directive and style_directive.strip():
+        prompt += f"\n\nSTYLE DIRECTIVE — the user has requested you target this specific style:\n{style_directive.strip()}"
+    return prompt
+
 client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 
@@ -64,9 +71,12 @@ async def healthz():
 async def analyze(request: Request):
     body = await request.json()
     text = body.get("text", "")
+    style_directive = body.get("style_directive", "")
 
     if not text or len(text.strip()) < 8:
         return {"error": "Text too short"}
+
+    system_prompt = build_system_prompt(style_directive)
 
     async def stream_response():
         try:
@@ -76,7 +86,7 @@ async def analyze(request: Request):
                 temperature=0.7,
                 stream=True,
                 messages=[
-                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "system", "content": system_prompt},
                     {"role": "user", "content": f'Analyze this text:\n\n"{text}"'},
                 ],
             )

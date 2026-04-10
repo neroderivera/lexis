@@ -98,21 +98,30 @@ function App() {
   const [dark, setDark] = useState(true);
   const [copied, setCopied] = useState(false);
   const [toggledChanges, setToggledChanges] = useState<Set<number>>(new Set());
+  const [styleDirective, setStyleDirective] = useState("");
+  const [styleOpen, setStyleOpen] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
   const debouncedInput = useDebounce(input, DEBOUNCE_MS);
   const prevAnalyzed = useRef("");
   const cachedResult = useRef<AnalysisResult | null>(null);
   const cachedInput = useRef("");
+  const cachedStyle = useRef("");
   const modalRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     const saved = localStorage.getItem("lexis-theme");
     if (saved) setDark(saved === "dark");
+    const savedStyle = localStorage.getItem("lexis-style-directive");
+    if (savedStyle) setStyleDirective(savedStyle);
   }, []);
 
   useEffect(() => {
     localStorage.setItem("lexis-theme", dark ? "dark" : "light");
   }, [dark]);
+
+  useEffect(() => {
+    localStorage.setItem("lexis-style-directive", styleDirective);
+  }, [styleDirective]);
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
@@ -126,8 +135,8 @@ function App() {
   }, []);
 
   const analyze = useCallback(async (text: string, force = false) => {
-    if (!force && text === prevAnalyzed.current) return;
-    if (!force && cachedResult.current && cachedInput.current) {
+    if (!force && text === prevAnalyzed.current && styleDirective === cachedStyle.current) return;
+    if (!force && cachedResult.current && cachedInput.current && styleDirective === cachedStyle.current) {
       const sim = textSimilarity(text, cachedInput.current);
       if (sim >= SIMILARITY_THRESHOLD) {
         prevAnalyzed.current = text;
@@ -153,7 +162,7 @@ function App() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         signal: controller.signal,
-        body: JSON.stringify({ text }),
+        body: JSON.stringify({ text, style_directive: styleDirective }),
       });
 
       const reader = response.body!.getReader();
@@ -191,6 +200,7 @@ function App() {
       const parsed = JSON.parse(clean);
       cachedResult.current = parsed;
       cachedInput.current = text;
+      cachedStyle.current = styleDirective;
       setResult(parsed);
     } catch (e: unknown) {
       if (e instanceof Error && e.name !== "AbortError") {
@@ -200,7 +210,7 @@ function App() {
     } finally {
       setStreaming(false);
     }
-  }, []);
+  }, [styleDirective]);
 
   useEffect(() => {
     if (debouncedInput.trim().length >= MIN_LENGTH) {
@@ -450,13 +460,91 @@ function App() {
               minHeight: 300,
             }}
           />
+          {/* Style directive config */}
           <div style={{
-            position: "absolute",
-            bottom: 32,
-            left: 48,
+            borderTop: panelBorder,
+            marginTop: 16,
+            paddingTop: 12,
+          }}>
+            <button
+              onClick={() => setStyleOpen(!styleOpen)}
+              style={{
+                background: "none",
+                border: "none",
+                color: styleDirective ? accent : theme.textMuted,
+                fontSize: 10,
+                letterSpacing: "0.2em",
+                textTransform: "uppercase" as const,
+                cursor: "pointer",
+                fontFamily: "inherit",
+                padding: 0,
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+              }}
+              onMouseEnter={e => e.currentTarget.style.color = theme.text}
+              onMouseLeave={e => e.currentTarget.style.color = styleDirective ? accent : theme.textMuted}
+            >
+              <span style={{
+                display: "inline-block",
+                transform: styleOpen ? "rotate(90deg)" : "rotate(0deg)",
+                transition: "transform 0.15s",
+                fontSize: 8,
+              }}>&#9654;</span>
+              Style directive{styleDirective ? " \u2022" : ""}
+            </button>
+            {styleOpen && (
+              <div style={{ marginTop: 10, animation: "fadeIn 0.2s" }}>
+                <textarea
+                  value={styleDirective}
+                  onChange={e => setStyleDirective(e.target.value)}
+                  placeholder={"e.g. Write in the style of Cormac McCarthy \u2014 sparse punctuation, biblical cadence, visceral imagery\u2026"}
+                  style={{
+                    width: "100%",
+                    background: theme.toggleBg,
+                    border: toggleBtnBorder,
+                    outline: "none",
+                    resize: "vertical",
+                    fontFamily: "Palatino, serif",
+                    fontSize: 13,
+                    lineHeight: 1.7,
+                    color: theme.text,
+                    caretColor: accent,
+                    padding: "10px 12px",
+                    minHeight: 60,
+                    maxHeight: 140,
+                    transition: "border-color 0.15s",
+                  }}
+                  onFocus={e => e.currentTarget.style.borderColor = accent}
+                  onBlur={e => e.currentTarget.style.borderColor = theme.toggleBorder}
+                />
+                {styleDirective && (
+                  <button
+                    onClick={() => setStyleDirective("")}
+                    style={{
+                      background: "none",
+                      border: "none",
+                      color: theme.textMuted,
+                      fontSize: 9,
+                      letterSpacing: "0.15em",
+                      textTransform: "uppercase" as const,
+                      cursor: "pointer",
+                      fontFamily: "inherit",
+                      padding: "6px 0 0 0",
+                    }}
+                    onMouseEnter={e => e.currentTarget.style.color = theme.text}
+                    onMouseLeave={e => e.currentTarget.style.color = theme.textMuted}
+                  >Clear</button>
+                )}
+              </div>
+            )}
+          </div>
+
+          <div style={{
             fontSize: 10,
             color: theme.textFaint,
             letterSpacing: "0.15em",
+            marginTop: 12,
           }}>
             {input.length > 0 ? wordCount + " words" : ""}
           </div>
