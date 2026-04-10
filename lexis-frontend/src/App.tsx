@@ -4,6 +4,31 @@ import "./App.css";
 const API_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
 const DEBOUNCE_MS = 900;
 const MIN_LENGTH = 8;
+const SIMILARITY_THRESHOLD = 0.85;
+
+function textSimilarity(a: string, b: string): number {
+  if (a === b) return 1;
+  if (!a.length || !b.length) return 0;
+  const longer = a.length >= b.length ? a : b;
+  const shorter = a.length >= b.length ? b : a;
+  if (longer.length === 0) return 1;
+  let matches = 0;
+  const windowSize = 2;
+  const longerBigrams = new Map<string, number>();
+  for (let i = 0; i < longer.length - windowSize + 1; i++) {
+    const bigram = longer.substring(i, i + windowSize);
+    longerBigrams.set(bigram, (longerBigrams.get(bigram) || 0) + 1);
+  }
+  for (let i = 0; i < shorter.length - windowSize + 1; i++) {
+    const bigram = shorter.substring(i, i + windowSize);
+    const count = longerBigrams.get(bigram) || 0;
+    if (count > 0) {
+      longerBigrams.set(bigram, count - 1);
+      matches++;
+    }
+  }
+  return (2.0 * matches) / (longer.length + shorter.length - 2 * (windowSize - 1));
+}
 
 interface Change {
   original: string;
@@ -76,6 +101,8 @@ function App() {
   const abortRef = useRef<AbortController | null>(null);
   const debouncedInput = useDebounce(input, DEBOUNCE_MS);
   const prevAnalyzed = useRef("");
+  const cachedResult = useRef<AnalysisResult | null>(null);
+  const cachedInput = useRef("");
   const modalRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -98,8 +125,16 @@ function App() {
     return () => document.removeEventListener("mousedown", handler);
   }, []);
 
-  const analyze = useCallback(async (text: string) => {
-    if (text === prevAnalyzed.current) return;
+  const analyze = useCallback(async (text: string, force = false) => {
+    if (!force && text === prevAnalyzed.current) return;
+    if (!force && cachedResult.current && cachedInput.current) {
+      const sim = textSimilarity(text, cachedInput.current);
+      if (sim >= SIMILARITY_THRESHOLD) {
+        prevAnalyzed.current = text;
+        setResult(cachedResult.current);
+        return;
+      }
+    }
     prevAnalyzed.current = text;
 
     if (abortRef.current) abortRef.current.abort();
@@ -154,6 +189,8 @@ function App() {
       const codeBlockRegex = /```json|```/g;
       const clean = fullText.replace(codeBlockRegex, "").trim();
       const parsed = JSON.parse(clean);
+      cachedResult.current = parsed;
+      cachedInput.current = text;
       setResult(parsed);
     } catch (e: unknown) {
       if (e instanceof Error && e.name !== "AbortError") {
@@ -176,6 +213,7 @@ function App() {
       setModalPos(null);
       prevAnalyzed.current = "";
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [debouncedInput, analyze]);
 
   const copyRewrite = () => {
@@ -453,6 +491,25 @@ function App() {
                   letterSpacing: "0.1em",
                   fontStyle: "italic",
                 }}>click highlighted words</span>
+              )}
+              {result && !streaming && (
+                <button
+                  onClick={() => analyze(input.trim(), true)}
+                  style={{
+                    background: "none",
+                    border: copyBtnBorder,
+                    color: theme.textMuted,
+                    padding: "4px 14px",
+                    fontSize: 9,
+                    letterSpacing: "0.2em",
+                    textTransform: "uppercase" as const,
+                    cursor: "pointer",
+                    fontFamily: "inherit",
+                    transition: "all 0.15s",
+                  }}
+                  onMouseEnter={e => { e.currentTarget.style.borderColor = theme.textMuted; e.currentTarget.style.color = theme.text; }}
+                  onMouseLeave={e => { e.currentTarget.style.borderColor = theme.border; e.currentTarget.style.color = theme.textMuted; }}
+                >Regenerate</button>
               )}
               {result && (
                 <button
