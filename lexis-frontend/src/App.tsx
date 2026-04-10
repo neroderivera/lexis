@@ -102,6 +102,7 @@ function App() {
   const [styleOpen, setStyleOpen] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
   const debouncedInput = useDebounce(input, DEBOUNCE_MS);
+  const debouncedStyle = useDebounce(styleDirective, DEBOUNCE_MS);
   const prevAnalyzed = useRef("");
   const cachedResult = useRef<AnalysisResult | null>(null);
   const cachedInput = useRef("");
@@ -135,11 +136,13 @@ function App() {
   }, []);
 
   const analyze = useCallback(async (text: string, force = false) => {
-    if (!force && text === prevAnalyzed.current && styleDirective === cachedStyle.current) return;
-    if (!force && cachedResult.current && cachedInput.current && styleDirective === cachedStyle.current) {
+    if (!force && text === prevAnalyzed.current && debouncedStyle === cachedStyle.current) return;
+    if (!force && cachedResult.current && cachedInput.current && debouncedStyle === cachedStyle.current) {
       const sim = textSimilarity(text, cachedInput.current);
       if (sim >= SIMILARITY_THRESHOLD) {
+        if (abortRef.current) abortRef.current.abort();
         prevAnalyzed.current = text;
+        setStreaming(false);
         setResult(cachedResult.current);
         return;
       }
@@ -162,7 +165,7 @@ function App() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         signal: controller.signal,
-        body: JSON.stringify({ text, style_directive: styleDirective }),
+        body: JSON.stringify({ text, style_directive: debouncedStyle }),
       });
 
       const reader = response.body!.getReader();
@@ -200,7 +203,7 @@ function App() {
       const parsed = JSON.parse(clean);
       cachedResult.current = parsed;
       cachedInput.current = text;
-      cachedStyle.current = styleDirective;
+      cachedStyle.current = debouncedStyle;
       setResult(parsed);
     } catch (e: unknown) {
       if (e instanceof Error && e.name !== "AbortError") {
@@ -210,7 +213,7 @@ function App() {
     } finally {
       setStreaming(false);
     }
-  }, [styleDirective]);
+  }, [debouncedStyle]);
 
   useEffect(() => {
     if (debouncedInput.trim().length >= MIN_LENGTH) {
