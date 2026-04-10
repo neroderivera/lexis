@@ -156,8 +156,10 @@ function App() {
       const parsed = JSON.parse(clean);
       setResult(parsed);
     } catch (e: unknown) {
-      if (e instanceof Error && e.name !== "AbortError")
+      if (e instanceof Error && e.name !== "AbortError") {
         setError("Analysis failed. Try again.");
+        prevAnalyzed.current = "";
+      }
     } finally {
       setStreaming(false);
     }
@@ -520,7 +522,7 @@ function App() {
                     key={i}
                     onClick={(e) => handleHighlightClick(seg.change!, e)}
                     style={{
-                      color: isToggled ? theme.accentText : theme.accentText,
+                      color: isToggled ? theme.unchanged : theme.accentText,
                       borderBottom: isToggled ? mutedBorderBottom : accentBorderBottom,
                       paddingBottom: 1,
                       cursor: "pointer",
