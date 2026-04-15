@@ -4,6 +4,31 @@ import "./App.css";
 const API_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
 const DEBOUNCE_MS = 900;
 const MIN_LENGTH = 8;
+const SIMILARITY_THRESHOLD = 0.85;
+
+function textSimilarity(a: string, b: string): number {
+  if (a === b) return 1;
+  if (!a.length || !b.length) return 0;
+  const longer = a.length >= b.length ? a : b;
+  const shorter = a.length >= b.length ? b : a;
+  if (longer.length === 0) return 1;
+  let matches = 0;
+  const windowSize = 2;
+  const longerBigrams = new Map<string, number>();
+  for (let i = 0; i < longer.length - windowSize + 1; i++) {
+    const bigram = longer.substring(i, i + windowSize);
+    longerBigrams.set(bigram, (longerBigrams.get(bigram) || 0) + 1);
+  }
+  for (let i = 0; i < shorter.length - windowSize + 1; i++) {
+    const bigram = shorter.substring(i, i + windowSize);
+    const count = longerBigrams.get(bigram) || 0;
+    if (count > 0) {
+      longerBigrams.set(bigram, count - 1);
+      matches++;
+    }
+  }
+  return (2.0 * matches) / (longer.length + shorter.length - 2 * (windowSize - 1));
+}
 
 interface Change {
   original: string;
@@ -73,19 +98,31 @@ function App() {
   const [dark, setDark] = useState(true);
   const [copied, setCopied] = useState(false);
   const [toggledChanges, setToggledChanges] = useState<Set<number>>(new Set());
+  const [styleDirective, setStyleDirective] = useState("");
+  const [styleOpen, setStyleOpen] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
   const debouncedInput = useDebounce(input, DEBOUNCE_MS);
+  const debouncedStyle = useDebounce(styleDirective, DEBOUNCE_MS);
   const prevAnalyzed = useRef("");
+  const cachedResult = useRef<AnalysisResult | null>(null);
+  const cachedInput = useRef("");
+  const cachedStyle = useRef("");
   const modalRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     const saved = localStorage.getItem("lexis-theme");
     if (saved) setDark(saved === "dark");
+    const savedStyle = localStorage.getItem("lexis-style-directive");
+    if (savedStyle) setStyleDirective(savedStyle);
   }, []);
 
   useEffect(() => {
     localStorage.setItem("lexis-theme", dark ? "dark" : "light");
   }, [dark]);
+
+  useEffect(() => {
+    localStorage.setItem("lexis-style-directive", styleDirective);
+  }, [styleDirective]);
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
@@ -98,8 +135,18 @@ function App() {
     return () => document.removeEventListener("mousedown", handler);
   }, []);
 
-  const analyze = useCallback(async (text: string) => {
-    if (text === prevAnalyzed.current) return;
+  const analyze = useCallback(async (text: string, force = false) => {
+    if (!force && text === prevAnalyzed.current && debouncedStyle === cachedStyle.current) return;
+    if (!force && cachedResult.current && cachedInput.current && debouncedStyle === cachedStyle.current) {
+      const sim = textSimilarity(text, cachedInput.current);
+      if (sim >= SIMILARITY_THRESHOLD) {
+        if (abortRef.current) abortRef.current.abort();
+        prevAnalyzed.current = text;
+        setStreaming(false);
+        setResult(cachedResult.current);
+        return;
+      }
+    }
     prevAnalyzed.current = text;
 
     if (abortRef.current) abortRef.current.abort();
@@ -118,7 +165,7 @@ function App() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         signal: controller.signal,
-        body: JSON.stringify({ text }),
+        body: JSON.stringify({ text, style_directive: debouncedStyle }),
       });
 
       const reader = response.body!.getReader();
@@ -154,14 +201,19 @@ function App() {
       const codeBlockRegex = /```json|```/g;
       const clean = fullText.replace(codeBlockRegex, "").trim();
       const parsed = JSON.parse(clean);
+      cachedResult.current = parsed;
+      cachedInput.current = text;
+      cachedStyle.current = debouncedStyle;
       setResult(parsed);
     } catch (e: unknown) {
-      if (e instanceof Error && e.name !== "AbortError")
+      if (e instanceof Error && e.name !== "AbortError") {
         setError("Analysis failed. Try again.");
+        prevAnalyzed.current = "";
+      }
     } finally {
       setStreaming(false);
     }
-  }, []);
+  }, [debouncedStyle]);
 
   useEffect(() => {
     if (debouncedInput.trim().length >= MIN_LENGTH) {
@@ -174,6 +226,7 @@ function App() {
       setModalPos(null);
       prevAnalyzed.current = "";
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [debouncedInput, analyze]);
 
   const copyRewrite = () => {
@@ -410,13 +463,91 @@ function App() {
               minHeight: 300,
             }}
           />
+          {/* Style directive config */}
           <div style={{
-            position: "absolute",
-            bottom: 32,
-            left: 48,
+            borderTop: panelBorder,
+            marginTop: 16,
+            paddingTop: 12,
+          }}>
+            <button
+              onClick={() => setStyleOpen(!styleOpen)}
+              style={{
+                background: "none",
+                border: "none",
+                color: styleDirective ? accent : theme.textMuted,
+                fontSize: 10,
+                letterSpacing: "0.2em",
+                textTransform: "uppercase" as const,
+                cursor: "pointer",
+                fontFamily: "inherit",
+                padding: 0,
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+              }}
+              onMouseEnter={e => e.currentTarget.style.color = theme.text}
+              onMouseLeave={e => e.currentTarget.style.color = styleDirective ? accent : theme.textMuted}
+            >
+              <span style={{
+                display: "inline-block",
+                transform: styleOpen ? "rotate(90deg)" : "rotate(0deg)",
+                transition: "transform 0.15s",
+                fontSize: 8,
+              }}>&#9654;</span>
+              Style directive{styleDirective ? " \u2022" : ""}
+            </button>
+            {styleOpen && (
+              <div style={{ marginTop: 10, animation: "fadeIn 0.2s" }}>
+                <textarea
+                  value={styleDirective}
+                  onChange={e => setStyleDirective(e.target.value)}
+                  placeholder={"e.g. Write in the style of Cormac McCarthy \u2014 sparse punctuation, biblical cadence, visceral imagery\u2026"}
+                  style={{
+                    width: "100%",
+                    background: theme.toggleBg,
+                    border: toggleBtnBorder,
+                    outline: "none",
+                    resize: "vertical",
+                    fontFamily: "Palatino, serif",
+                    fontSize: 13,
+                    lineHeight: 1.7,
+                    color: theme.text,
+                    caretColor: accent,
+                    padding: "10px 12px",
+                    minHeight: 60,
+                    maxHeight: 140,
+                    transition: "border-color 0.15s",
+                  }}
+                  onFocus={e => e.currentTarget.style.borderColor = accent}
+                  onBlur={e => e.currentTarget.style.borderColor = theme.toggleBorder}
+                />
+                {styleDirective && (
+                  <button
+                    onClick={() => setStyleDirective("")}
+                    style={{
+                      background: "none",
+                      border: "none",
+                      color: theme.textMuted,
+                      fontSize: 9,
+                      letterSpacing: "0.15em",
+                      textTransform: "uppercase" as const,
+                      cursor: "pointer",
+                      fontFamily: "inherit",
+                      padding: "6px 0 0 0",
+                    }}
+                    onMouseEnter={e => e.currentTarget.style.color = theme.text}
+                    onMouseLeave={e => e.currentTarget.style.color = theme.textMuted}
+                  >Clear</button>
+                )}
+              </div>
+            )}
+          </div>
+
+          <div style={{
             fontSize: 10,
             color: theme.textFaint,
             letterSpacing: "0.15em",
+            marginTop: 12,
           }}>
             {input.length > 0 ? wordCount + " words" : ""}
           </div>
@@ -451,6 +582,25 @@ function App() {
                   letterSpacing: "0.1em",
                   fontStyle: "italic",
                 }}>click highlighted words</span>
+              )}
+              {result && !streaming && (
+                <button
+                  onClick={() => analyze(input.trim(), true)}
+                  style={{
+                    background: "none",
+                    border: copyBtnBorder,
+                    color: theme.textMuted,
+                    padding: "4px 14px",
+                    fontSize: 9,
+                    letterSpacing: "0.2em",
+                    textTransform: "uppercase" as const,
+                    cursor: "pointer",
+                    fontFamily: "inherit",
+                    transition: "all 0.15s",
+                  }}
+                  onMouseEnter={e => { e.currentTarget.style.borderColor = theme.textMuted; e.currentTarget.style.color = theme.text; }}
+                  onMouseLeave={e => { e.currentTarget.style.borderColor = theme.border; e.currentTarget.style.color = theme.textMuted; }}
+                >Regenerate</button>
               )}
               {result && (
                 <button
@@ -520,7 +670,7 @@ function App() {
                     key={i}
                     onClick={(e) => handleHighlightClick(seg.change!, e)}
                     style={{
-                      color: isToggled ? theme.accentText : theme.accentText,
+                      color: isToggled ? theme.unchanged : theme.accentText,
                       borderBottom: isToggled ? mutedBorderBottom : accentBorderBottom,
                       paddingBottom: 1,
                       cursor: "pointer",
